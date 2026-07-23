@@ -206,6 +206,22 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('denounce_renuncio', ({ roomId, infractorId }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    try {
+        const result = room.denounceRenuncio(socket.id, infractorId);
+        io.to(roomId).emit('renuncio_alert', {
+            success: result.success,
+            message: result.message
+        });
+        broadcastGameState(roomId);
+        broadcastGlobalState();
+    } catch (e: any) {
+        socket.emit('error_message', e.message);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('Usuario desconectado:', socket.id);
     globalUsers.delete(socket.id);

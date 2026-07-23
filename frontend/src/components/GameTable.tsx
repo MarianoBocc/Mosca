@@ -1,4 +1,4 @@
-import  { useState } from 'react';
+import  { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import type { Card } from '../store/gameStore';
 import { socket } from '../services/socket';
@@ -9,6 +9,21 @@ export const GameTable = () => {
   const myId = socket.id;
   
   const [selectedCards, setSelectedCards] = useState<number[]>([]);
+  const [renuncioMsg, setRenuncioMsg] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    socket.on('renuncio_alert', (data: { success: boolean; message: string }) => {
+        setRenuncioMsg(data);
+        const timer = setTimeout(() => {
+            setRenuncioMsg(null);
+        }, 6000);
+        return () => clearTimeout(timer);
+    });
+
+    return () => {
+        socket.off('renuncio_alert');
+    };
+  }, []);
 
   if (!gameState) return null;
 
@@ -76,6 +91,20 @@ export const GameTable = () => {
 
   return (
     <div className="game-table-container">
+      {renuncioMsg && (
+        <div style={{
+            background: renuncioMsg.success ? 'rgba(16, 185, 129, 0.95)' : 'rgba(239, 68, 68, 0.95)',
+            color: '#fff',
+            padding: '12px 20px',
+            borderRadius: 8,
+            textAlign: 'center',
+            fontWeight: 'bold',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+            marginBottom: 8
+        }}>
+            {renuncioMsg.message}
+        </div>
+      )}
       <div className="game-header glass-panel">
         <div style={{ display: 'flex', gap: 20 }}>
             <div>Sala: <strong>{gameState.roomId}</strong></div>
@@ -108,6 +137,24 @@ export const GameTable = () => {
                             <div style={{ fontSize: '0.8rem', color: p.isPlayingRound ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold' }}>
                                 {p.isPlayingRound ? 'JUGANDO' : 'PASÓ'}
                             </div>
+                        )}
+                        {!isMe && ['PLAYING', 'ROUND_END'].includes(gameState.status) && p.isPlayingRound && (
+                            <button 
+                                className="btn" 
+                                style={{ 
+                                    marginTop: 8, 
+                                    padding: '4px 8px', 
+                                    fontSize: '0.7rem', 
+                                    background: 'var(--danger)',
+                                    boxShadow: 'none',
+                                    borderRadius: '4px',
+                                    width: '100%',
+                                    whiteSpace: 'nowrap'
+                                }}
+                                onClick={() => socket.emit('denounce_renuncio', { roomId: gameState.roomId, infractorId: p.id })}
+                            >
+                                ¿Renuncio? 🚫
+                            </button>
                         )}
                     </div>
                 )

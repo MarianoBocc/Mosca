@@ -12,6 +12,7 @@ export interface Player {
   connected: boolean;
   consecutivePasses: number; // Límite 2
   isPlayingRound: boolean; // Si decidió entrar a la mano
+  hasRenunciado: boolean; // Si cometió un renuncio en la mano actual
 }
 
 export interface TrickCard {
@@ -58,7 +59,8 @@ export class Room {
       hasDiscarded: false,
       connected: true,
       consecutivePasses: 0,
-      isPlayingRound: false
+      isPlayingRound: false,
+      hasRenunciado: false
     });
   }
 
@@ -86,6 +88,7 @@ export class Room {
       p.tricksWon = 0;
       p.hasDiscarded = false;
       p.isPlayingRound = false; // Reset
+      p.hasRenunciado = false;
     });
     
     this.trumpSuit = null;
@@ -242,13 +245,13 @@ export class Room {
 
     const cardToPlay = player.hand[cardIndex];
 
-    // Regla: Obligatorio seguir el palo (pinta)
+    // Regla: Obligatorio seguir el palo (pinta) - Si no la sigue teniendo, comete renuncio
     if (this.currentTrick.length > 0) {
         if (!this.leadSuit) this.leadSuit = this.currentTrick[0].card.suit;
         
         const hasLeadSuit = player.hand.some(c => c.suit === this.leadSuit);
         if (hasLeadSuit && cardToPlay.suit !== this.leadSuit) {
-            throw new Error(`Debes jugar una carta de la pinta jugada (${this.leadSuit})`);
+            player.hasRenunciado = true; // Se comete renuncio silenciosamente
         }
     } else {
         this.leadSuit = cardToPlay.suit;
@@ -324,6 +327,50 @@ export class Room {
         this.status = 'ROUND_END'; // Pausa pequeña antes de la próxima
         // El siguiente dealer es el mano actual (antihorario)
         this.dealerIndex = this.getNextPlayerIndex(this.dealerIndex);
+    }
+  }
+
+  denounceRenuncio(denuncianteId: string, infractorId: string): { success: boolean; message: string } {
+    if (!['PLAYING', 'ROUND_END'].includes(this.status)) {
+        throw new Error("Solo puedes denunciar un renuncio durante el juego o al finalizar la ronda");
+    }
+
+    const denunciante = this.players.find(p => p.id === denuncianteId);
+    const infractor = this.players.find(p => p.id === infractorId);
+
+    if (!denunciante || !infractor) throw new Error("Jugadores no encontrados");
+    if (denuncianteId === infractorId) throw new Error("No te puedes denunciar a ti mismo");
+
+    if (infractor.hasRenunciado) {
+        // Penalización al infractor: +5 puntos
+        infractor.points += 5;
+
+        // Puntos a favor (tricksWon) quedan sin efecto para el infractor y se asignan al denunciante
+        const tricksWonByInfractor = infractor.tricksWon;
+        infractor.tricksWon = 0;
+
+        // Restamos esa cantidad de puntos al denunciante
+        denunciante.points -= tricksWonByInfractor;
+
+        // Limpiar flag
+        infractor.hasRenunciado = false;
+
+        // Verificar fin del juego
+        const hasWinner = this.players.some(p => p.points <= 0);
+        if (hasWinner) {
+            this.status = 'GAME_END';
+        }
+
+        return {
+            success: true,
+            message: `¡Denuncia correcta! ${denunciante.name} denunció a ${infractor.name}. ${infractor.name} recibe +5 puntos de castigo y sus ${tricksWonByInfractor} bazas ganadas se le restan a ${denunciante.name}.`
+        };
+    } else {
+        // Falsa denuncia: sin penalización para el denunciante (conforme comentarios)
+        return {
+            success: false,
+            message: `¡Denuncia falsa! ${denunciante.name} acusó a ${infractor.name} de renuncio pero no cometió infracción.`
+        };
     }
   }
 }
