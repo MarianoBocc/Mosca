@@ -292,9 +292,10 @@
     justify-content: flex-start;
   }
   .opponent-panel {
-    padding: 4px 8px;
-    font-size: 0.75rem;
-    flex: 1 1 40%;
+    padding: 4px 6px;
+    font-size: 0.7rem;
+    flex: 1 1 22%;
+    min-width: 70px;
   }
   .center-table {
     min-height: 120px;
@@ -305,8 +306,15 @@
     padding: 12px;
   }
   .cards-container {
-    gap: -15px; /* Overlap cards slightly on small screens */
-    justify-content: flex-start;
+    gap: 0;
+    justify-content: center;
+    padding-left: 15px;
+  }
+  .cards-container .card-view {
+    margin-left: -15px; /* Overlap cards slightly on small screens */
+  }
+  .cards-container .card-view:first-child {
+    margin-left: 0;
   }
   .card-view {
     width: 60px;

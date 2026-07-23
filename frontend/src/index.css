@@ -24,7 +24,13 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* Avoid scrolling in card game */
+  overflow-y: auto; /* Allow scrolling on mobile if layout overflows */
+}
+
+@media (min-width: 769px) {
+  body {
+    overflow: hidden; /* Avoid scrolling in card game on desktop */
+  }
 }
 
 #root {
