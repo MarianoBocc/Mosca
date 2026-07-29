@@ -1,20 +1,29 @@
 import React, { useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { socket } from '../services/socket';
-import { Users, Lock, Unlock, Play } from 'lucide-react';
+import { Users, Lock, Unlock, Play, ArrowLeft } from 'lucide-react';
 
 export const GlobalLobby = () => {
   const onlineUsers = useGameStore(state => state.onlineUsers);
   const availableRooms = useGameStore(state => state.availableRooms);
   const playerName = useGameStore(state => state.playerName);
+  const selectedGame = useGameStore(state => state.selectedGame);
+  const setSelectedGame = useGameStore(state => state.setSelectedGame);
   const error = useGameStore(state => state.error);
   
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newRoomId, setNewRoomId] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
+  const [trucoMode, setTrucoMode] = useState<'1v1' | '2v2' | '3v3'>('1v1');
+
+  // Filtrar salas según el juego seleccionado
+  const filteredRooms = availableRooms.filter(room => {
+    const roomGameType = room.gameType || 'MOSCA';
+    return roomGameType === selectedGame;
+  });
 
   const handleJoin = (roomId: string) => {
-      socket.emit('join_room', { roomId, playerName });
+      socket.emit('join_room', { roomId, playerName, gameType: selectedGame });
   };
 
   const handleCreate = (e: React.FormEvent) => {
@@ -23,7 +32,9 @@ export const GlobalLobby = () => {
       socket.emit('create_room', { 
           roomId: newRoomId.trim().toUpperCase(), 
           playerName, 
-          isPrivate 
+          isPrivate,
+          gameType: selectedGame,
+          trucoMode: selectedGame === 'TRUCO' ? trucoMode : undefined
       });
       setShowCreateModal(false);
   };
@@ -31,7 +42,15 @@ export const GlobalLobby = () => {
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-          <h2>¡Hola, <span style={{color: 'var(--accent)'}}>{playerName}</span>!</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button 
+              onClick={() => setSelectedGame(null)} 
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <h2>Lobby de <span style={{color: selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)'}}>{selectedGame}</span></h2>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)' }}>
               <Users size={18} /> {onlineUsers.length} en línea
           </div>
@@ -42,17 +61,17 @@ export const GlobalLobby = () => {
       <div style={styles.content}>
           <div style={styles.section} className="glass-panel">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                  <h3>Partidas Públicas</h3>
-                  <button className="btn" onClick={() => setShowCreateModal(true)} style={{ padding: '8px 16px' }}>
+                  <h3>Partidas Públicas ({selectedGame})</h3>
+                  <button className="btn" onClick={() => setShowCreateModal(true)} style={{ padding: '8px 16px', background: selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)', boxShadow: selectedGame === 'TRUCO' ? '0 4px 14px 0 rgba(16, 185, 129, 0.39)' : '0 4px 14px 0 rgba(56, 189, 248, 0.39)' }}>
                       Crear Sala
                   </button>
               </div>
 
-              {availableRooms.length === 0 ? (
+              {filteredRooms.length === 0 ? (
                   <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>No hay partidas públicas esperando. ¡Crea una!</p>
               ) : (
                   <div style={styles.roomList}>
-                      {availableRooms.map(room => (
+                      {filteredRooms.map(room => (
                           <div key={room.id} style={styles.roomCard}>
                               <div>
                                   <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>Sala: {room.id}</div>
@@ -62,7 +81,7 @@ export const GlobalLobby = () => {
                                   className="btn" 
                                   onClick={() => handleJoin(room.id)}
                                   disabled={room.playersCount >= room.maxPlayers}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px' }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', background: selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)' }}
                               >
                                   <Play size={16} /> Unirse
                               </button>
@@ -74,7 +93,7 @@ export const GlobalLobby = () => {
 
           <div style={styles.section} className="glass-panel">
               <h3>Unirse a sala privada</h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 16 }}>Si tienes el código de una sala privada, ingrésalo aquí.</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 16 }}>Si tienes el código de una sala privada de {selectedGame}, ingrésalo aquí.</p>
               <div style={{ display: 'flex', gap: 8 }}>
                   <input 
                       className="input-field" 
@@ -82,7 +101,7 @@ export const GlobalLobby = () => {
                       id="privateRoomInput"
                       style={{ textTransform: 'uppercase' }}
                   />
-                  <button className="btn" onClick={() => {
+                  <button className="btn" style={{ background: selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)' }} onClick={() => {
                       const val = (document.getElementById('privateRoomInput') as HTMLInputElement).value;
                       if(val) handleJoin(val.toUpperCase());
                   }}>Entrar</button>
@@ -93,7 +112,7 @@ export const GlobalLobby = () => {
       {showCreateModal && (
           <div style={styles.modalOverlay}>
               <div className="glass-panel" style={styles.modal}>
-                  <h3 style={{ marginBottom: 20 }}>Crear Nueva Sala</h3>
+                  <h3 style={{ marginBottom: 20 }}>Crear Nueva Sala ({selectedGame})</h3>
                   <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                       <div>
                           <label style={{ display: 'block', marginBottom: 8, color: 'var(--text-muted)' }}>Código de la sala</label>
@@ -107,6 +126,23 @@ export const GlobalLobby = () => {
                               required
                           />
                       </div>
+                      
+                      {selectedGame === 'TRUCO' && (
+                        <div>
+                            <label style={{ display: 'block', marginBottom: 8, color: 'var(--text-muted)' }}>Modo de juego</label>
+                            <select 
+                              className="input-field"
+                              value={trucoMode} 
+                              onChange={e => setTrucoMode(e.target.value as any)}
+                              style={{ background: 'rgba(0,0,0,0.4)', color: '#fff' }}
+                            >
+                              <option value="1v1">Mano a Mano (1v1)</option>
+                              <option value="2v2">Parejas (2v2)</option>
+                              <option value="3v3">Piquete (3v3)</option>
+                            </select>
+                        </div>
+                      )}
+
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <input 
                               type="checkbox" 
@@ -124,7 +160,7 @@ export const GlobalLobby = () => {
                           <button type="button" className="btn" style={{ flex: 1, background: 'rgba(255,255,255,0.1)' }} onClick={() => setShowCreateModal(false)}>
                               Cancelar
                           </button>
-                          <button type="submit" className="btn" style={{ flex: 1 }}>
+                          <button type="submit" className="btn" style={{ flex: 1, background: selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)' }}>
                               Crear
                           </button>
                       </div>

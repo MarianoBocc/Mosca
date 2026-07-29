@@ -20,18 +20,56 @@ export interface PlayerState {
   connected: boolean;
   consecutivePasses: number;
   isPlayingRound: boolean;
-  hand: (Card | null)[]; // Cartas o null si son ocultas
+  hand: (Card | null)[];
+  
+  // Truco específicos
+  team?: 'A' | 'B';
+  playedCards?: Card[];
+  declaredEnvidoPoints?: number | null;
+  envidoShown?: boolean;
+  malas?: number;
+  buenas?: number;
 }
 
 export interface GameState {
   roomId: string;
-  status: 'WAITING' | 'DEALING' | 'TRUMP_SELECTION' | 'ENTERING_ROUND' | 'DISCARD' | 'PLAYING' | 'ROUND_END' | 'GAME_END';
+  status: 'WAITING' | 'DEALING' | 'TRUMP_SELECTION' | 'ENTERING_ROUND' | 'DISCARD' | 'PLAYING' | 'ROUND_END' | 'GAME_END' | 'ENVIDO_DECLARATION';
+  gameType?: 'MOSCA' | 'TRUCO';
   dealerIndex: number;
   turnIndex: number;
   manoIndex: number;
-  trumpSuit: string | null;
-  trumpCard: Card | null;
-  leadSuit: string | null;
+  
+  // Mosca específicos
+  trumpSuit?: string | null;
+  trumpCard?: Card | null;
+  leadSuit?: string | null;
+  
+  // Truco específicos
+  mode?: '1v1' | '2v2' | '3v3';
+  bazas?: { winnerPlayerId: string | 'parda'; winnerTeam: 'A' | 'B' | 'parda' }[];
+  trucoBetState?: {
+    status: 'NONE' | 'CALLED' | 'ACCEPTED' | 'DECLINED';
+    currentStake: number;
+    lastCallerTeam: 'A' | 'B' | null;
+  };
+  envidoBetState?: {
+    status: 'NONE' | 'CALLED' | 'ACCEPTED' | 'DECLINED';
+    history: ('envido' | 'real_envido' | 'falta_envido')[];
+    currentStake: number;
+    lastCallerId: string | null;
+    challengedPlayerId: string | null;
+    canCall: boolean;
+  };
+  envidoWinnerPlayerId?: string | null;
+  envidoVerificationStatus?: 'IDLE' | 'PENDING_SHOW' | 'VERIFIED' | 'CLAIMED' | 'EXPIRED';
+  envidoVerificationSecondsLeft?: number;
+  puntaMode?: boolean;
+  puntaDuelos?: {
+    dueloIndex: number;
+    dueloPlayerIds: [string, string];
+    active: boolean;
+  } | null;
+
   currentTrick: TrickCard[];
   players: PlayerState[];
 }
@@ -45,6 +83,7 @@ export interface PublicRoom {
   id: string;
   playersCount: number;
   maxPlayers: number;
+  gameType?: 'MOSCA' | 'TRUCO';
 }
 
 interface StoreState {
@@ -52,11 +91,13 @@ interface StoreState {
   error: string | null;
   setGameState: (state: GameState | null) => void;
   setError: (error: string | null) => void;
-  // Local user info
+  
   playerName: string;
   setPlayerName: (name: string) => void;
+
+  selectedGame: 'MOSCA' | 'TRUCO' | null;
+  setSelectedGame: (game: 'MOSCA' | 'TRUCO' | null) => void;
   
-  // Global Lobby State
   onlineUsers: GlobalUser[];
   availableRooms: PublicRoom[];
   setGlobalState: (users: GlobalUser[], rooms: PublicRoom[]) => void;
@@ -70,6 +111,9 @@ export const useGameStore = create<StoreState>((set) => ({
   
   playerName: '',
   setPlayerName: (name) => set({ playerName: name }),
+
+  selectedGame: null,
+  setSelectedGame: (game) => set({ selectedGame: game }),
 
   onlineUsers: [],
   availableRooms: [],

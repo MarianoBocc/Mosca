@@ -3,6 +3,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { Room } from './game/Room';
+import { TrucoRoom } from './game/TrucoRoom';
 
 const app = express();
 app.use(cors());
@@ -18,7 +19,7 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3001;
 
 // Almacén de salas activas en memoria
-const rooms: Map<string, Room> = new Map();
+const rooms: Map<string, Room | TrucoRoom> = new Map();
 
 interface GlobalUser {
   id: string;
@@ -32,7 +33,12 @@ io.on('connection', (socket) => {
   const broadcastGlobalState = () => {
     const publicRooms = Array.from(rooms.values())
         .filter(r => !r.isPrivate && r.status === 'WAITING')
-        .map(r => ({ id: r.id, playersCount: r.players.length, maxPlayers: r.maxPlayers }));
+        .map(r => ({ 
+            id: r.id, 
+            playersCount: r.players.length, 
+            maxPlayers: r.maxPlayers,
+            gameType: 'gameType' in r ? r.gameType : 'MOSCA'
+        }));
         
     const onlineUsers = Array.from(globalUsers.values());
 
@@ -52,21 +58,70 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
-    // A cada jugador le enviamos un estado donde solo ve sus propias cartas
-    room.players.forEach(p => {
+    if ('gameType' in room && room.gameType === 'TRUCO') {
+      const trucoRoom = room as TrucoRoom;
+      trucoRoom.players.forEach(p => {
         const safeState = {
-            roomId: room.id,
-            status: room.status,
-            dealerIndex: room.dealerIndex,
-            turnIndex: room.turnIndex,
-            manoIndex: room.manoIndex,
-            trumpSuit: room.trumpSuit,
-            trumpCard: room.trumpCard,
-            leadSuit: room.leadSuit,
-            currentTrick: room.currentTrick,
-            players: room.players.map(player => {
-                const isDealer = room.players[room.dealerIndex].id === player.id;
-                const hideOwnHand = room.status === 'TRUMP_SELECTION' && isDealer && p.id === player.id;
+          roomId: trucoRoom.id,
+          status: trucoRoom.status,
+          gameType: 'TRUCO',
+          mode: trucoRoom.mode,
+          dealerIndex: trucoRoom.dealerIndex,
+          turnIndex: trucoRoom.turnIndex,
+          manoIndex: trucoRoom.manoIndex,
+          currentTrick: trucoRoom.currentTrick,
+          bazas: trucoRoom.bazas,
+          trucoBetState: trucoRoom.trucoBetState,
+          envidoBetState: trucoRoom.envidoBetState,
+          envidoWinnerPlayerId: trucoRoom.envidoWinnerPlayerId,
+          envidoVerificationStatus: trucoRoom.envidoVerificationStatus,
+          envidoVerificationSecondsLeft: trucoRoom.envidoVerificationSecondsLeft,
+          puntaMode: trucoRoom.puntaMode,
+          puntaDuelos: trucoRoom.puntaDuelos,
+          players: trucoRoom.players.map(player => {
+            const isSelf = player.id === p.id;
+            const showHandToAll = player.envidoShown || 
+                                  (trucoRoom.envidoWinnerPlayerId === player.id && 
+                                   (trucoRoom.envidoVerificationStatus === 'VERIFIED' || 
+                                    trucoRoom.envidoVerificationStatus === 'CLAIMED'));
+            let handToSend = (isSelf || showHandToAll) ? player.hand : new Array(player.hand.length).fill(null);
+            
+            const teamPoints = trucoRoom.getTeamPoints(player.team);
+
+            return {
+              id: player.id,
+              name: player.name,
+              points: player.points,
+              team: player.team,
+              hand: handToSend,
+              playedCards: player.playedCards,
+              connected: player.connected,
+              declaredEnvidoPoints: player.declaredEnvidoPoints,
+              envidoShown: player.envidoShown,
+              malas: teamPoints.malas,
+              buenas: teamPoints.buenas
+            };
+          })
+        };
+        io.to(p.id).emit('game_state', safeState);
+      });
+    } else {
+      const moscaRoom = room as Room;
+      moscaRoom.players.forEach(p => {
+        const safeState = {
+            roomId: moscaRoom.id,
+            status: moscaRoom.status,
+            gameType: 'MOSCA',
+            dealerIndex: moscaRoom.dealerIndex,
+            turnIndex: moscaRoom.turnIndex,
+            manoIndex: moscaRoom.manoIndex,
+            trumpSuit: moscaRoom.trumpSuit,
+            trumpCard: moscaRoom.trumpCard,
+            leadSuit: moscaRoom.leadSuit,
+            currentTrick: moscaRoom.currentTrick,
+            players: moscaRoom.players.map(player => {
+                const isDealer = moscaRoom.players[moscaRoom.dealerIndex].id === player.id;
+                const hideOwnHand = moscaRoom.status === 'TRUMP_SELECTION' && isDealer && p.id === player.id;
                 
                 let handToSend;
                 if (player.id !== p.id) {
@@ -91,15 +146,26 @@ io.on('connection', (socket) => {
             })
         };
         io.to(p.id).emit('game_state', safeState);
-    });
+      });
+    }
   };
 
-  socket.on('create_room', ({ roomId, playerName, isPrivate }) => {
+  socket.on('create_room', ({ roomId, playerName, isPrivate, gameType, trucoMode }) => {
     if (rooms.has(roomId)) {
         socket.emit('error_message', 'La sala ya existe');
         return;
     }
-    const room = new Room(roomId, isPrivate);
+    
+    let room;
+    if (gameType === 'TRUCO') {
+      const tr = new TrucoRoom(roomId, isPrivate);
+      tr.setMode(trucoMode || '1v1');
+      tr.onStateChange = () => broadcastGameState(roomId);
+      room = tr;
+    } else {
+      room = new Room(roomId, isPrivate);
+    }
+    
     rooms.set(roomId, room);
     
     try {
@@ -112,18 +178,22 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('join_room', ({ roomId, playerName }) => {
+  socket.on('join_room', ({ roomId, playerName, gameType }) => {
     let room = rooms.get(roomId);
     if (!room) {
-        // Fallback for direct joins to non-existent rooms (treat as public)
-        room = new Room(roomId, false);
+        if (gameType === 'TRUCO') {
+          const tr = new TrucoRoom(roomId, false);
+          tr.onStateChange = () => broadcastGameState(roomId);
+          room = tr;
+        } else {
+          room = new Room(roomId, false);
+        }
         rooms.set(roomId, room);
         broadcastGlobalState();
     }
 
     try {
-        // Permite reconexión: si hay un jugador con el mismo nombre desconectado, tomar su lugar
-        const existingPlayer = room.players.find(p => p.name === playerName && !p.connected);
+        const existingPlayer = room.players.find(p => p.name === playerName);
         if (existingPlayer) {
             existingPlayer.id = socket.id;
             existingPlayer.connected = true;
@@ -133,7 +203,7 @@ io.on('connection', (socket) => {
         
         socket.join(roomId);
         broadcastGameState(roomId);
-        broadcastGlobalState(); // Update players count in lobby
+        broadcastGlobalState();
     } catch (e: any) {
         socket.emit('error_message', e.message);
     }
@@ -162,11 +232,12 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ==== Acciones Mosca ====
   socket.on('set_trump', ({ roomId, cardIndex }) => {
     const room = rooms.get(roomId);
-    if (!room) return;
+    if (!room || !('setTrump' in room)) return;
     try {
-        room.setTrump(socket.id, cardIndex);
+        (room as Room).setTrump(socket.id, cardIndex);
         broadcastGameState(roomId);
     } catch (e: any) {
         socket.emit('error_message', e.message);
@@ -175,9 +246,9 @@ io.on('connection', (socket) => {
 
   socket.on('enter_round', ({ roomId, enter }) => {
     const room = rooms.get(roomId);
-    if (!room) return;
+    if (!room || !('enterRound' in room)) return;
     try {
-        room.enterRound(socket.id, enter);
+        (room as Room).enterRound(socket.id, enter);
         broadcastGameState(roomId);
     } catch (e: any) {
         socket.emit('error_message', e.message);
@@ -186,20 +257,9 @@ io.on('connection', (socket) => {
 
   socket.on('discard_cards', ({ roomId, cardIndexes }) => {
     const room = rooms.get(roomId);
-    if (!room) return;
+    if (!room || !('discardCards' in room)) return;
     try {
-        room.discardCards(socket.id, cardIndexes);
-        broadcastGameState(roomId);
-    } catch (e: any) {
-        socket.emit('error_message', e.message);
-    }
-  });
-
-  socket.on('play_card', ({ roomId, cardIndex }) => {
-    const room = rooms.get(roomId);
-    if (!room) return;
-    try {
-        room.playCard(socket.id, cardIndex);
+        (room as Room).discardCards(socket.id, cardIndexes);
         broadcastGameState(roomId);
     } catch (e: any) {
         socket.emit('error_message', e.message);
@@ -208,9 +268,9 @@ io.on('connection', (socket) => {
 
   socket.on('denounce_renuncio', ({ roomId, infractorId }) => {
     const room = rooms.get(roomId);
-    if (!room) return;
+    if (!room || !('denounceRenuncio' in room)) return;
     try {
-        const result = room.denounceRenuncio(socket.id, infractorId);
+        const result = (room as Room).denounceRenuncio(socket.id, infractorId);
         io.to(roomId).emit('renuncio_alert', {
             success: result.success,
             message: result.message
@@ -222,13 +282,123 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ==== Acciones Compartidas o Truco ====
+  socket.on('play_card', ({ roomId, cardIndex }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    try {
+        room.playCard(socket.id, cardIndex);
+        broadcastGameState(roomId);
+    } catch (e: any) {
+        socket.emit('error_message', e.message);
+    }
+  });
+
+  // Truco específicos
+  socket.on('cantar_envido', ({ roomId, callType }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('cantarEnvido' in room)) return;
+    try {
+      (room as TrucoRoom).cantarEnvido(socket.id, callType);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('responder_envido', ({ roomId, response }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('responderEnvido' in room)) return;
+    try {
+      (room as TrucoRoom).responderEnvido(socket.id, response);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('declarar_envido', ({ roomId, points }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('declararPuntosEnvido' in room)) return;
+    try {
+      (room as TrucoRoom).declararPuntosEnvido(socket.id, points);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('son_buenas', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('declararPuntosEnvido' in room)) return;
+    try {
+      (room as TrucoRoom).declararPuntosEnvido(socket.id, 0); // "Son buenas" equivale a declarar 0 puntos y pasar al siguiente
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('cantar_truco', ({ roomId, call }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('cantarTruco' in room)) return;
+    try {
+      (room as TrucoRoom).cantarTruco(socket.id, call);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('responder_truco', ({ roomId, response }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('responderTruco' in room)) return;
+    try {
+      (room as TrucoRoom).responderTruco(socket.id, response);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('irse_al_mazo', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('irseAlMazo' in room)) return;
+    try {
+      (room as TrucoRoom).irseAlMazo(socket.id);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('mostrar_puntos_envido', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('mostrarPuntosEnvido' in room)) return;
+    try {
+      (room as TrucoRoom).mostrarPuntosEnvido(socket.id);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
+  socket.on('reclamar_puntos_envido', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room || !('reclamarPuntosEnvido' in room)) return;
+    try {
+      (room as TrucoRoom).reclamarPuntosEnvido(socket.id);
+      broadcastGameState(roomId);
+    } catch (e: any) {
+      socket.emit('error_message', e.message);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('Usuario desconectado:', socket.id);
     globalUsers.delete(socket.id);
     broadcastGlobalState();
     
-    // TODO: Manejar desconexión real (reconexión, pausar juego, etc)
-    // Por ahora lo marcaremos como disconnected en sus salas
     rooms.forEach(room => {
         const p = room.players.find(player => player.id === socket.id);
         if (p) {
