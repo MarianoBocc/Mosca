@@ -217,6 +217,30 @@ export const TrucoTable = () => {
                     boxShadow: isPlayerTurn ? '0 0 15px rgba(16, 185, 129, 0.4)' : 'none',
                     position: 'relative'
                   }}>
+                    {player.declaredEnvidoPoints !== null && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '-24px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        background: 'rgba(245, 158, 11, 0.95)',
+                        color: '#fff',
+                        fontWeight: 800,
+                        fontSize: '0.75rem',
+                        padding: '2px 8px',
+                        borderRadius: '20px',
+                        boxShadow: '0 2px 8px rgba(245, 158, 11, 0.4)',
+                        border: '1px solid #f59e0b',
+                        whiteSpace: 'nowrap',
+                        zIndex: 20,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}>
+                        <span>📢</span>
+                        <span>{player.declaredEnvidoPoints} pts</span>
+                      </div>
+                    )}
                     <span style={styles.playerName}>
                       {player.name} {isSelf && '(Tú)'}
                     </span>

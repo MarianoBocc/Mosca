@@ -1,4 +1,5 @@
 import { Deck, Card, Suit } from './Deck';
+import { saveGameHistory } from './historyDb';
 
 export type GameStatus = 'WAITING' | 'DEALING' | 'TRUMP_SELECTION' | 'ENTERING_ROUND' | 'DISCARD' | 'PLAYING' | 'ROUND_END' | 'GAME_END';
 
@@ -13,6 +14,8 @@ export interface Player {
   consecutivePasses: number; // Límite 2
   isPlayingRound: boolean; // Si decidió entrar a la mano
   hasRenunciado: boolean; // Si cometió un renuncio en la mano actual
+  cardsDiscardedCount?: number;
+  wonTricks?: Card[][];
 }
 
 export interface TrickCard {
@@ -26,6 +29,9 @@ export class Room {
   status: GameStatus = 'WAITING';
   players: Player[] = [];
   deck: Deck = new Deck();
+  onStateChange?: () => void;
+  pointValue: number = 0;
+  spectators: { id: string; name: string }[] = [];
   
   dealerIndex: number = 0;
   turnIndex: number = 0; // De quién es el turno
@@ -60,7 +66,9 @@ export class Room {
       connected: true,
       consecutivePasses: 0,
       isPlayingRound: false,
-      hasRenunciado: false
+      hasRenunciado: false,
+      cardsDiscardedCount: 0,
+      wonTricks: []
     });
   }
 
@@ -89,6 +97,8 @@ export class Room {
       p.hasDiscarded = false;
       p.isPlayingRound = false; // Reset
       p.hasRenunciado = false;
+      p.cardsDiscardedCount = 0;
+      p.wonTricks = [];
     });
     
     this.trumpSuit = null;
@@ -225,6 +235,7 @@ export class Room {
     const newCards = this.deck.drawCards(toRemove.length);
     player.hand.push(...newCards);
     player.hasDiscarded = true;
+    player.cardsDiscardedCount = toRemove.length;
 
     // Avanzar turno al siguiente jugador ACTIVO (antihorario)
     this.turnIndex = this.getFirstActivePlayerIndex(this.getNextPlayerIndex(this.turnIndex));
@@ -239,6 +250,11 @@ export class Room {
   playCard(playerId: string, cardIndex: number): void {
     if (this.status !== 'PLAYING') throw new Error("No es fase de juego");
     if (this.players[this.turnIndex].id !== playerId) throw new Error("No es tu turno");
+
+    const activePlayersCount = this.players.filter(p => p.isPlayingRound).length;
+    if (this.currentTrick.length >= activePlayersCount) {
+        throw new Error("Esperando que se limpie la baza anterior");
+    }
 
     const player = this.players[this.turnIndex];
     if (cardIndex < 0 || cardIndex >= player.hand.length) throw new Error("Carta inválida");
@@ -263,9 +279,11 @@ export class Room {
     this.currentTrick.push({ playerId, card: cardToPlay });
 
     // ¿Terminó la baza? (Solo cuentan los que juegan)
-    const activePlayersCount = this.players.filter(p => p.isPlayingRound).length;
     if (this.currentTrick.length === activePlayersCount) {
-        this.evaluateTrick();
+        setTimeout(() => {
+            this.evaluateTrick();
+            if (this.onStateChange) this.onStateChange();
+        }, 3000);
     } else {
         this.turnIndex = this.getFirstActivePlayerIndex(this.getNextPlayerIndex(this.turnIndex));
     }
@@ -296,6 +314,8 @@ export class Room {
     const winnerPlayer = this.players.find(p => p.id === winnerId);
     if (winnerPlayer) {
         winnerPlayer.tricksWon++;
+        if (!winnerPlayer.wonTricks) winnerPlayer.wonTricks = [];
+        winnerPlayer.wonTricks.push(this.currentTrick.map(tc => tc.card));
     }
 
     // El ganador sale en la siguiente baza
@@ -308,6 +328,16 @@ export class Room {
     if (firstActive && firstActive.hand.length === 0) {
         this.endRound();
     }
+  }
+
+  private saveHistory(): void {
+    saveGameHistory({
+      roomId: this.id,
+      gameType: 'MOSCA',
+      pointValue: this.pointValue,
+      players: this.players.map(p => ({ name: p.name, points: p.points })),
+      timestamp: new Date().toISOString()
+    });
   }
 
   private endRound(): void {
@@ -323,6 +353,7 @@ export class Room {
     const hasWinner = this.players.some(p => p.points <= 0);
     if (hasWinner) {
         this.status = 'GAME_END';
+        this.saveHistory();
     } else {
         this.status = 'ROUND_END'; // Pausa pequeña antes de la próxima
         // El siguiente dealer es el mano actual (antihorario)
@@ -347,10 +378,14 @@ export class Room {
 
         // Puntos a favor (tricksWon) quedan sin efecto para el infractor y se asignan al denunciante
         const tricksWonByInfractor = infractor.tricksWon;
+        const wonTricksByInfractor = infractor.wonTricks || [];
         infractor.tricksWon = 0;
+        infractor.wonTricks = [];
 
         // Restamos esa cantidad de puntos al denunciante
         denunciante.points -= tricksWonByInfractor;
+        if (!denunciante.wonTricks) denunciante.wonTricks = [];
+        denunciante.wonTricks.push(...wonTricksByInfractor);
 
         // Limpiar flag
         infractor.hasRenunciado = false;
@@ -359,6 +394,7 @@ export class Room {
         const hasWinner = this.players.some(p => p.points <= 0);
         if (hasWinner) {
             this.status = 'GAME_END';
+            this.saveHistory();
         }
 
         return {

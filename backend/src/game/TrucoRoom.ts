@@ -41,6 +41,8 @@ export class TrucoRoom {
   mode: '1v1' | '2v2' | '3v3' = '1v1';
   maxPlayers = 2;
   minPlayers = 2;
+  pointValue: number = 0;
+  spectators: { id: string; name: string }[] = [];
 
   dealerIndex: number = 0;
   turnIndex: number = 0;

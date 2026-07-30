@@ -15,6 +15,7 @@ export const GlobalLobby = () => {
   const [newRoomId, setNewRoomId] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [trucoMode, setTrucoMode] = useState<'1v1' | '2v2' | '3v3'>('1v1');
+  const [pointValue, setPointValue] = useState<number>(0);
 
   // Filtrar salas según el juego seleccionado
   const filteredRooms = availableRooms.filter(room => {
@@ -34,7 +35,8 @@ export const GlobalLobby = () => {
           playerName, 
           isPrivate,
           gameType: selectedGame,
-          trucoMode: selectedGame === 'TRUCO' ? trucoMode : undefined
+          trucoMode: selectedGame === 'TRUCO' ? trucoMode : undefined,
+          pointValue
       });
       setShowCreateModal(false);
   };
@@ -80,10 +82,15 @@ export const GlobalLobby = () => {
                               <button 
                                   className="btn" 
                                   onClick={() => handleJoin(room.id)}
-                                  disabled={room.playersCount >= room.maxPlayers}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', background: selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)' }}
+                                  style={{ 
+                                      display: 'flex', 
+                                      alignItems: 'center', 
+                                      gap: 8, 
+                                      padding: '8px 16px', 
+                                      background: room.playersCount >= room.maxPlayers ? 'rgba(255,255,255,0.1)' : (selectedGame === 'TRUCO' ? 'var(--success)' : 'var(--accent)') 
+                                  }}
                               >
-                                  <Play size={16} /> Unirse
+                                  <Play size={16} /> {room.playersCount >= room.maxPlayers ? 'Espectar' : 'Unirse'}
                               </button>
                           </div>
                       ))}
@@ -142,6 +149,23 @@ export const GlobalLobby = () => {
                             </select>
                         </div>
                       )}
+
+                      <div>
+                          <label style={{ display: 'block', marginBottom: 8, color: 'var(--text-muted)' }}>Valor del punto</label>
+                          <select 
+                            className="input-field"
+                            value={pointValue} 
+                            onChange={e => setPointValue(Number(e.target.value))}
+                            style={{ background: 'rgba(0,0,0,0.4)', color: '#fff' }}
+                          >
+                            <option value={0}>Sin valor (0)</option>
+                            <option value={50}>50</option>
+                            <option value={100}>100</option>
+                            <option value={200}>200</option>
+                            <option value={500}>500</option>
+                            <option value={1000}>1000</option>
+                          </select>
+                      </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <input 

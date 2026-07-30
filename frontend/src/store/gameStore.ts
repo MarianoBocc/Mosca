@@ -21,6 +21,9 @@ export interface PlayerState {
   consecutivePasses: number;
   isPlayingRound: boolean;
   hand: (Card | null)[];
+  // Mosca específicos
+  cardsDiscardedCount?: number;
+  wonTricks?: Card[][];
   
   // Truco específicos
   team?: 'A' | 'B';
@@ -69,6 +72,9 @@ export interface GameState {
     dueloPlayerIds: [string, string];
     active: boolean;
   } | null;
+
+  pointValue?: number;
+  spectators?: { id: string; name: string }[];
 
   currentTrick: TrickCard[];
   players: PlayerState[];

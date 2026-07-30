@@ -78,6 +78,8 @@ io.on('connection', (socket) => {
           envidoVerificationSecondsLeft: trucoRoom.envidoVerificationSecondsLeft,
           puntaMode: trucoRoom.puntaMode,
           puntaDuelos: trucoRoom.puntaDuelos,
+          pointValue: trucoRoom.pointValue || 0,
+          spectators: (trucoRoom.spectators || []).map(s => ({ id: s.id, name: s.name })),
           players: trucoRoom.players.map(player => {
             const isSelf = player.id === p.id;
             const showHandToAll = player.envidoShown || 
@@ -105,6 +107,51 @@ io.on('connection', (socket) => {
         };
         io.to(p.id).emit('game_state', safeState);
       });
+
+      // Broadcast a espectadores
+      if (trucoRoom.spectators) {
+        trucoRoom.spectators.forEach(spec => {
+          const safeState = {
+            roomId: trucoRoom.id,
+            status: trucoRoom.status,
+            gameType: 'TRUCO',
+            mode: trucoRoom.mode,
+            dealerIndex: trucoRoom.dealerIndex,
+            turnIndex: trucoRoom.turnIndex,
+            manoIndex: trucoRoom.manoIndex,
+            currentTrick: trucoRoom.currentTrick,
+            bazas: trucoRoom.bazas,
+            trucoBetState: trucoRoom.trucoBetState,
+            envidoBetState: trucoRoom.envidoBetState,
+            envidoWinnerPlayerId: trucoRoom.envidoWinnerPlayerId,
+            envidoVerificationStatus: trucoRoom.envidoVerificationStatus,
+            envidoVerificationSecondsLeft: trucoRoom.envidoVerificationSecondsLeft,
+            puntaMode: trucoRoom.puntaMode,
+            puntaDuelos: trucoRoom.puntaDuelos,
+            pointValue: trucoRoom.pointValue || 0,
+            spectators: trucoRoom.spectators.map(s => ({ id: s.id, name: s.name })),
+            players: trucoRoom.players.map(player => {
+              const handToSend = new Array(player.hand.length).fill(null);
+              const teamPoints = trucoRoom.getTeamPoints(player.team);
+
+              return {
+                id: player.id,
+                name: player.name,
+                points: player.points,
+                team: player.team,
+                hand: handToSend,
+                playedCards: player.playedCards,
+                connected: player.connected,
+                declaredEnvidoPoints: player.declaredEnvidoPoints,
+                envidoShown: player.envidoShown,
+                malas: teamPoints.malas,
+                buenas: teamPoints.buenas
+              };
+            })
+          };
+          io.to(spec.id).emit('game_state', safeState);
+        });
+      }
     } else {
       const moscaRoom = room as Room;
       moscaRoom.players.forEach(p => {
@@ -119,6 +166,8 @@ io.on('connection', (socket) => {
             trumpCard: moscaRoom.trumpCard,
             leadSuit: moscaRoom.leadSuit,
             currentTrick: moscaRoom.currentTrick,
+            pointValue: moscaRoom.pointValue || 0,
+            spectators: (moscaRoom.spectators || []).map(s => ({ id: s.id, name: s.name })),
             players: moscaRoom.players.map(player => {
                 const isDealer = moscaRoom.players[moscaRoom.dealerIndex].id === player.id;
                 const hideOwnHand = moscaRoom.status === 'TRUMP_SELECTION' && isDealer && p.id === player.id;
@@ -141,16 +190,56 @@ io.on('connection', (socket) => {
                     connected: player.connected,
                     consecutivePasses: player.consecutivePasses,
                     isPlayingRound: player.isPlayingRound,
-                    hand: handToSend
+                    hand: handToSend,
+                    cardsDiscardedCount: player.cardsDiscardedCount,
+                    wonTricks: player.wonTricks || []
                 };
             })
         };
         io.to(p.id).emit('game_state', safeState);
       });
+
+      // Broadcast a espectadores
+      if (moscaRoom.spectators) {
+        moscaRoom.spectators.forEach(spec => {
+          const safeState = {
+              roomId: moscaRoom.id,
+              status: moscaRoom.status,
+              gameType: 'MOSCA',
+              dealerIndex: moscaRoom.dealerIndex,
+              turnIndex: moscaRoom.turnIndex,
+              manoIndex: moscaRoom.manoIndex,
+              trumpSuit: moscaRoom.trumpSuit,
+              trumpCard: moscaRoom.trumpCard,
+              leadSuit: moscaRoom.leadSuit,
+              currentTrick: moscaRoom.currentTrick,
+              pointValue: moscaRoom.pointValue || 0,
+              spectators: moscaRoom.spectators.map(s => ({ id: s.id, name: s.name })),
+              players: moscaRoom.players.map(player => {
+                  const handToSend = new Array(player.hand.length).fill(null);
+
+                  return {
+                      id: player.id,
+                      name: player.name,
+                      points: player.points,
+                      tricksWon: player.tricksWon,
+                      hasDiscarded: player.hasDiscarded,
+                      connected: player.connected,
+                      consecutivePasses: player.consecutivePasses,
+                      isPlayingRound: player.isPlayingRound,
+                      hand: handToSend,
+                      cardsDiscardedCount: player.cardsDiscardedCount,
+                      wonTricks: player.wonTricks || []
+                  };
+              })
+          };
+          io.to(spec.id).emit('game_state', safeState);
+        });
+      }
     }
   };
 
-  socket.on('create_room', ({ roomId, playerName, isPrivate, gameType, trucoMode }) => {
+  socket.on('create_room', ({ roomId, playerName, isPrivate, gameType, trucoMode, pointValue }) => {
     if (rooms.has(roomId)) {
         socket.emit('error_message', 'La sala ya existe');
         return;
@@ -160,10 +249,14 @@ io.on('connection', (socket) => {
     if (gameType === 'TRUCO') {
       const tr = new TrucoRoom(roomId, isPrivate);
       tr.setMode(trucoMode || '1v1');
+      tr.pointValue = pointValue || 0;
       tr.onStateChange = () => broadcastGameState(roomId);
       room = tr;
     } else {
-      room = new Room(roomId, isPrivate);
+      const mr = new Room(roomId, isPrivate);
+      mr.pointValue = pointValue || 0;
+      mr.onStateChange = () => broadcastGameState(roomId);
+      room = mr;
     }
     
     rooms.set(roomId, room);
@@ -186,7 +279,9 @@ io.on('connection', (socket) => {
           tr.onStateChange = () => broadcastGameState(roomId);
           room = tr;
         } else {
-          room = new Room(roomId, false);
+          const mr = new Room(roomId, false);
+          mr.onStateChange = () => broadcastGameState(roomId);
+          room = mr;
         }
         rooms.set(roomId, room);
         broadcastGlobalState();
@@ -197,6 +292,15 @@ io.on('connection', (socket) => {
         if (existingPlayer) {
             existingPlayer.id = socket.id;
             existingPlayer.connected = true;
+        } else if (room.status !== 'WAITING' || room.players.length >= room.maxPlayers) {
+            // Join as spectator
+            if (!room.spectators) room.spectators = [];
+            const existingSpectatorIdx = room.spectators.findIndex(s => s.name === playerName);
+            if (existingSpectatorIdx >= 0) {
+                room.spectators[existingSpectatorIdx].id = socket.id;
+            } else {
+                room.spectators.push({ id: socket.id, name: playerName });
+            }
         } else {
             room.addPlayer(socket.id, playerName);
         }
@@ -404,6 +508,13 @@ io.on('connection', (socket) => {
         if (p) {
             p.connected = false;
             broadcastGameState(room.id);
+        }
+        if (room.spectators) {
+            const initialLen = room.spectators.length;
+            room.spectators = room.spectators.filter(s => s.id !== socket.id);
+            if (room.spectators.length !== initialLen) {
+                broadcastGameState(room.id);
+            }
         }
     });
   });
